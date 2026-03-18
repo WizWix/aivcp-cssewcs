@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PPE 감지 시스템 - 공사 현장 안전 관리</title>
+
+  <!-- Pretendard Variable 폰트 (CDN) -->
+  <link rel="stylesheet"
+    href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+
+  <!-- 앱 스타일시트 -->
+  <link rel="stylesheet" href="/css/main.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/notification.css" />
+
+  <!-- Chart.js (통계 차트) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+
+<body class="app">
+  <!-- 사이드바 네비게이션 -->
+  <aside class="sidebar">
+    <div class="sidebar__logo">
+      <div class="sidebar__logo-title">PPE 감지 시스템</div>
+      <div class="sidebar__logo-sub">공사 현장 안전 관리</div>
+    </div>
+
+    <nav class="nav">
+      <div class="nav__item nav__item--active" data-page="monitoring">
+        <span class="nav__icon">📹</span>
+        실시간 모니터링
+      </div>
+      <div class="nav__item" data-page="logs">
+        <span class="nav__icon">📋</span>
+        감지 기록
+      </div>
+      <div class="nav__item" data-page="weekly">
+        <span class="nav__icon">📊</span>
+        주간 현황
+      </div>
+      <div class="nav__item" data-page="monthly">
+        <span class="nav__icon">📅</span>
+        월간 현황
+      </div>
+    </nav>
+  </aside>
+
+  <!-- 메인 콘텐츠 (JS가 동적으로 렌더링) -->
+  <main class="content" id="content">
+    <div class="spinner"></div>
+  </main>
+
+  <!-- 실시간 위반 알림 팝업 컨테이너 -->
+  <div class="notification-container" id="notificationContainer"></div>
+
+  <!-- SPA 라우터 (ES 모듈) -->
+  <script type="module" src="/js/app.js"></script>
+</body>
+
+</html>

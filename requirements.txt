@@ -1,0 +1,22 @@
+# 웹 프레임워크
+fastapi==0.115.12
+python-multipart==0.0.20
+sse-starlette==2.2.1
+uvicorn[standard]==0.34.0
+
+# AI / 영상 처리
+numpy>=1.26.0
+onnxruntime
+opencv-python-headless
+
+# 데이터베이스
+aiosqlite==0.21.0
+
+# 오디오 재생
+simpleaudio==1.0.4
+
+# 시리얼 게이트 제어 (실제 하드웨어 사용 시)
+pyserial==3.5
+
+# 설정 관리
+pydantic-settings>=2.0.0

@@ -1,0 +1,239 @@
+/* BEM 컴포넌트 스타일: 영상 스트림, 감지 기록 테이블, 차트 컨테이너 */
+
+/* ── 모니터링 페이지 ─────────────────────────────────────────────── */
+.monitor {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  gap: 20px;
+}
+
+@media (max-width: 1024px) {
+  .monitor {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 영상 피드 카드 */
+.feed {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.feed__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.feed__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.feed__controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.feed__bbox-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.feed__bbox-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.feed__video-wrap {
+  position: relative;
+  background-color: #0d0f14;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.feed__video-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.feed__status-dot {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--color-success);
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.3);
+}
+
+/* ── 오늘 현황 패널 ─────────────────────────────────────────────── */
+.today-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.today-panel .card {
+  padding: 16px;
+}
+
+/* ── 감지 기록 테이블 ────────────────────────────────────────────── */
+.log-table-wrap {
+  overflow-x: auto;
+  margin-top: 16px;
+}
+
+.log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.log-table th {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 2px solid var(--color-border);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.log-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: middle;
+}
+
+.log-table tr:hover td {
+  background-color: var(--color-bg);
+}
+
+/* 위반 클립 재생 버튼 */
+.log-table__play-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius);
+  color: var(--color-primary);
+  font-size: 12px;
+  transition: background-color var(--transition);
+}
+
+.log-table__play-btn:hover {
+  background-color: var(--color-primary);
+  color: #ffffff;
+}
+
+/* 클립 인라인 플레이어 */
+.clip-player {
+  margin-top: 8px;
+}
+
+.clip-player video {
+  width: 100%;
+  max-width: 400px;
+  border-radius: var(--radius);
+  background-color: #000;
+}
+
+/* ── 페이지네이션 ────────────────────────────────────────────────── */
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  justify-content: center;
+}
+
+.pagination__btn {
+  padding: 5px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--color-text);
+  background-color: var(--color-surface);
+  transition: background-color var(--transition);
+}
+
+.pagination__btn:hover:not(:disabled) {
+  background-color: var(--color-bg);
+}
+
+.pagination__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pagination__info {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  min-width: 80px;
+  text-align: center;
+}
+
+/* ── 날짜 필터 ──────────────────────────────────────────────────── */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.filter-bar__label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.filter-bar__input {
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font: inherit;
+  font-size: 13px;
+  color: var(--color-text);
+  background-color: var(--color-surface);
+}
+
+.filter-bar__input:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -1px;
+}
+
+/* ── 차트 컨테이너 ──────────────────────────────────────────────── */
+.chart-container {
+  position: relative;
+  height: 280px;
+  margin-top: 12px;
+}
+
+.chart-section {
+  margin-bottom: 28px;
+}
+
+.chart-section__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
