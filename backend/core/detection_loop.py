@@ -9,7 +9,7 @@ import threading
 import time
 from collections import deque
 from datetime import datetime
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, Coroutine, cast
 
 import cv2
 import numpy as np
@@ -18,8 +18,8 @@ from backend.config import Settings
 from backend.core.event_bus import EventBus
 from backend.core.frame_buffer import FrameBuffer
 from backend.core.stream_manager import StreamManager
-from backend.models.onnx_detector import PPEDetector
-from backend.models.schemas import ComplianceResult
+from backend.models.onnx_detector import PPEDetector, IoUTracker, _HELMET_KEYWORDS, _JACKET_KEYWORDS, _label_matches
+from backend.models.schemas import ComplianceResult, Detection
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +95,10 @@ class DetectionLoop:
         self._post_violation_buffer: list[np.ndarray] = []
         self._pre_violation_snapshot: list[np.ndarray] = []
         self._pending_result: ComplianceResult | None = None
+
+        # Person tracking
+        self._tracker = IoUTracker()
+        self._person_compliance: dict[int, deque[bool]] = {}
 
     # ── 생명주기 메서드 ────────────────────────────────────────────────────────
 
@@ -224,6 +228,18 @@ class DetectionLoop:
         compliant_count = sum(1 for v in self._compliant_smoother if v)
         return compliant_count > self._config.smoothing_window_size // 2
 
+    @staticmethod
+    def _iou(a, b) -> float:
+        """Calculate IoU between two boxes."""
+        from backend.models.onnx_detector import Box
+        x1 = max(a.x1, b.x1)
+        y1 = max(a.y1, b.y1)
+        x2 = min(a.x2, b.x2)
+        y2 = min(a.y2, b.y2)
+        inter = max(0, x2 - x1) * max(0, y2 - y1)
+        union = (a.w() * a.h()) + (b.w() * b.h()) - inter
+        return inter / union if union > 0 else 0
+
     def _trigger_compliant_detection(self) -> None:
         """준수 감지 시 total_detections 카운터 증가를 비동기 큐에 등록한다."""
         now = time.time()
@@ -318,7 +334,46 @@ class DetectionLoop:
                 continue
 
             # ── AI 추론 ────────────────────────────────────────────────────
-            result = self._detector.detect(frame)
+            # Person detection and tracking
+            violation_triggered = False
+            persons = self._detector._person_detector.detect(frame)
+            if not persons:
+                result = ComplianceResult(has_helmet=True, has_jacket=True, detections=[])
+                tracked = {}
+            else:
+                tracked = self._tracker.update(persons)
+                # Detect PPE
+                input_tensor = self._detector._preprocess(frame)
+                outputs = self._detector._session.run([self._detector._output_name], {self._detector._input_name: input_tensor})
+                ppe_detections = self._detector._postprocess(cast(np.ndarray, outputs[0]), frame.shape[:2])
+
+                # Associate PPE to persons
+                person_compliance = {}
+                for tid, person in tracked.items():
+                    has_h = any(self._iou(person, det) > 0.1 for det in ppe_detections if _label_matches(det.label, _HELMET_KEYWORDS))
+                    has_j = any(self._iou(person, det) > 0.1 for det in ppe_detections if _label_matches(det.label, _JACKET_KEYWORDS))
+                    person_compliance[tid] = (has_h, has_j)
+
+                # Update compliance history
+                for tid in list(self._person_compliance.keys()):
+                    if tid not in tracked:
+                        del self._person_compliance[tid]
+                for tid in tracked:
+                    if tid not in self._person_compliance:
+                        self._person_compliance[tid] = deque(maxlen=self._config.smoothing_window_size)
+                    has_h, has_j = person_compliance[tid]
+                    compliant = has_h and has_j
+                    self._person_compliance[tid].append(compliant)
+
+                # Check if any person is violating
+                violation_triggered = any(len(history) == self._config.smoothing_window_size and not all(history) for history in self._person_compliance.values())
+
+                if violation_triggered:
+                    all_detections = ppe_detections + [Detection(label='person', confidence=p.confidence, bbox=(p.x1, p.y1, p.x2, p.y2)) for p in tracked.values()]
+                    result = ComplianceResult(has_helmet=False, has_jacket=False, detections=all_detections)
+                else:
+                    result = ComplianceResult(has_helmet=True, has_jacket=True, detections=[])
+
             annotated = self._detector.draw_boxes(frame, result)
 
             # ── 프레임 배포 ────────────────────────────────────────────────
@@ -337,9 +392,12 @@ class DetectionLoop:
             # ── 시간 평활화 및 위반/준수 판정 ────────────────────────────
             elif self._pending_result is None:
                 # 이 프레임에서 보호구 미착용 여부
-                frame_has_violation = not result.is_compliant and bool(result.detections)
+                frame_has_violation = violation_triggered if 'violation_triggered' in locals() else False
                 # 이 프레임에서 보호구 착용 준수 여부 (사람이 감지되어야 함)
-                frame_is_compliant = result.is_compliant and bool(result.detections)
+                frame_is_compliant = (not frame_has_violation and
+                                     all(all(history) for history in self._person_compliance.values()
+                                         if len(history) == self._config.smoothing_window_size) and
+                                     bool(tracked))
 
                 self._smoother.append(frame_has_violation)
                 self._compliant_smoother.append(frame_is_compliant)

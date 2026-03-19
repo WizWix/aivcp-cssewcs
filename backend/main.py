@@ -57,6 +57,7 @@ async def lifespan(app: FastAPI):
     # 4. AI 모델 로드 (ONNX 파일이 없으면 경고 후 계속 진행)
     detector: PPEDetector | None = None
     ppe_model_path = Path(settings.ppe_model_path)
+    person_model_path = Path(settings.person_model_path)
     if ppe_model_path.exists():
         try:
             detector = PPEDetector(
@@ -64,6 +65,8 @@ async def lifespan(app: FastAPI):
                 conf_threshold=settings.conf_threshold,
                 nms_iou_threshold=settings.nms_iou_threshold,
                 input_size=settings.model_input_size,
+                person_weights=str(person_model_path) if person_model_path.exists() else None,
+                person_conf=0.45,
             )
             logger.info("PPE 감지 모델 로드 완료")
         except Exception as e:

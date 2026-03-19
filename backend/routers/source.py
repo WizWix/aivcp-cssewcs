@@ -84,7 +84,7 @@ async def set_file_source(
     try:
         parsed_ts = datetime.fromisoformat(start_timestamp)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"start_timestamp 형식 오류. ISO8601 형식이어야 합니다. (예: 2025-03-18T09:00:00)")
+        raise HTTPException(status_code=400, detail="start_timestamp 형식 오류. ISO8601 형식이어야 합니다. (예: 2025-03-18T09:00:00)")
 
     # 업로드 파일을 임시 디렉터리에 저장
     suffix = Path(file.filename or "video").suffix or ".mp4"

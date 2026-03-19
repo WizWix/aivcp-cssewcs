@@ -45,6 +45,11 @@ class Settings(BaseSettings):
         """PPE 감지 ONNX 모델 경로"""
         return self.models_dir / "best.onnx"
 
+    @property
+    def person_model_path(self) -> Path:
+        """Person 감지 모델 경로"""
+        return self.models_dir / "yolo12n.pt"
+
     # ONNX 추론 입력 크기 (낮출수록 추론 속도 증가, 정확도 감소)
     model_input_size: int = 640
 
@@ -57,7 +62,7 @@ class Settings(BaseSettings):
     detection_fps_target: int = 10
 
     # 오탐 방지를 위한 시간 평활화 윈도우 크기 (프레임 수)
-    smoothing_window_size: int = 7
+    smoothing_window_size: int = 15
 
     # 위반 감지 후 재감지 억제 시간 (초) - 동일 인원 중복 기록 방지
     violation_cooldown_sec: float = 10.0

@@ -81,7 +81,7 @@ class ViolationService:
         logger.info(f"위반 처리 시작 | 시각: {occurred_at.isoformat()} | 미착용: {missing}")
 
         # 1. 영상 클립 저장 (블로킹 I/O → executor로 오프로드)
-        clip_filename = self._make_clip_filename(occurred_at)
+        clip_filename = self._make_clip_filename(occurred_at, missing["helmet"], missing["jacket"])
         clip_path = Path(self._config.clips_dir) / clip_filename
         try:
             await asyncio.get_event_loop().run_in_executor(
@@ -168,9 +168,19 @@ class ViolationService:
             logger.error(f"준수 감지 DB 기록 실패: {e}")
 
     @staticmethod
-    def _make_clip_filename(occurred_at: datetime) -> str:
+    def _make_clip_filename(occurred_at: datetime, missing_helmet: bool, missing_jacket: bool) -> str:
         """위반 발생 시각 기반 클립 파일명을 생성한다."""
-        return f"violation_{occurred_at.strftime('%Y%m%d_%H%M%S_%f')}.mp4"
+        date_dir = occurred_at.strftime('%Y%m%d')
+        time_part = occurred_at.strftime('%H%M%S') + '-' + occurred_at.strftime('%f')[:3]
+        if missing_helmet and missing_jacket:
+            violation_type = 'hj'
+        elif missing_helmet:
+            violation_type = 'h'
+        elif missing_jacket:
+            violation_type = 'j'
+        else:
+            violation_type = 'unknown'  # shouldn't happen
+        return f"{date_dir}/{time_part}-{violation_type}.mp4"
 
     @staticmethod
     def _calc_avg_confidence(result: ComplianceResult) -> float | None:
@@ -190,6 +200,9 @@ class ViolationService:
             return
 
         h, w = frames[0].shape[:2]
+
+        # 날짜 디렉터리 생성
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
         writer: cv2.VideoWriter | None = None
         used_codec = ""
@@ -215,7 +228,8 @@ class ViolationService:
         finally:
             writer.release()
 
-        logger.info(f"클립 저장 완료: {output_path} ({len(frames)} 프레임, codec={used_codec})")
+        file_size = output_path.stat().st_size
+        logger.info(f"클립 저장 완료: {output_path} ({len(frames)} 프레임, codec={used_codec}, size={file_size} bytes)")
 
     async def _write_db(
         self,

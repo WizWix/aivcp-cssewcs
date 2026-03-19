@@ -8,6 +8,7 @@ uvicorn[standard]==0.34.0
 numpy>=1.26.0
 onnxruntime
 opencv-python-headless
+ultralytics>=8.0.0
 
 # 데이터베이스
 aiosqlite==0.21.0

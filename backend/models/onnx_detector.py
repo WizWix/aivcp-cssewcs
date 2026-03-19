@@ -4,12 +4,22 @@ Handles model loading, preprocessing, inference, postprocessing, and visualizati
 """
 
 import logging
+from dataclasses import dataclass
+from typing import cast, Dict, List
 
 import cv2
 import numpy as np
 import onnxruntime as ort
 
 from backend.models.schemas import ComplianceResult, Detection
+
+# Optional Ultralytics for person detection
+try:
+    from ultralytics import YOLO
+    _ULTRA_AVAILABLE = True
+except ImportError:
+    _ULTRA_AVAILABLE = False
+    logger.warning("Ultralytics not available, person detection will use fallback")
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +52,161 @@ def _label_matches(label: str, keywords: set[str]) -> bool:
     return any(kw in lower for kw in keywords)
 
 
+@dataclass
+class Box:
+    """Bounding box with coordinates and metadata."""
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+    confidence: float
+    class_id: int
+    label: str
+
+    def xyxy(self) -> tuple[int, int, int, int]:
+        return self.x1, self.y1, self.x2, self.y2
+
+    def w(self) -> int:
+        return self.x2 - self.x1
+
+    def h(self) -> int:
+        return self.y2 - self.y1
+
+
+class PersonDetector:
+    """Person detection using Ultralytics YOLO or OpenCV HOG fallback."""
+
+    def __init__(self, weights: str | None = None, conf: float = 0.45):
+        self.conf = conf
+        self.use_ultra = _ULTRA_AVAILABLE and weights is not None
+        if self.use_ultra:
+            try:
+                self.model = YOLO(weights)
+                dummy = np.zeros((640, 640, 3), dtype=np.uint8)
+                _ = self.model(dummy, conf=self.conf, verbose=False)
+                logger.info("Person detector: Ultralytics")
+            except Exception as e:
+                logger.warning(f"Ultralytics person model failed: {e}. Falling back to HOG.")
+                self.use_ultra = False
+        if not self.use_ultra:
+            self.hog = cv2.HOGDescriptor()
+            self.hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+            logger.info("Person detector: OpenCV HOG fallback")
+
+    def detect(self, frame: np.ndarray) -> list[Box]:
+        """Detect persons in the frame."""
+        H, W = frame.shape[:2]
+        out: list[Box] = []
+        if self.use_ultra:
+            res = self.model(frame, conf=self.conf, verbose=False)
+            for r in res:
+                names = r.names if hasattr(r, 'names') else {}
+                for b in r.boxes:
+                    x1, y1, x2, y2 = map(int, b.xyxy[0].tolist())
+                    c = float(b.conf[0])
+                    cls = int(b.cls[0])
+                    label = names.get(cls, str(cls))
+                    if label == 'person':
+                        x1, y1, x2, y2 = self._clip_box((x1, y1, x2, y2), W, H)
+                        out.append(Box(x1, y1, x2, y2, c, cls, 'person'))
+        else:
+            # HOG fallback
+            rects, weights = self.hog.detectMultiScale(frame, winStride=(8, 8), padding=(8, 8), scale=1.05)
+            for (x, y, w, h), c in zip(rects, weights):
+                if w < 32 or h < 64:
+                    continue
+                ar = h / max(1e-6, w)
+                if ar < 1.2:
+                    continue
+                x1, y1, x2, y2 = self._clip_box((x, y, x + w, y + h), W, H)
+                out.append(Box(x1, y1, x2, y2, float(c), 0, 'person'))
+        return out
+
+    @staticmethod
+    def _clip_box(b: tuple[int, int, int, int], W: int, H: int) -> tuple[int, int, int, int]:
+        x1, y1, x2, y2 = b
+        return max(0, x1), max(0, y1), min(W, x2), min(H, y2)
+
+
+@dataclass
+class Track:
+    id: int
+    box: Box
+    age: int = 0
+    hits: int = 1
+
+
+class IoUTracker:
+    def __init__(self, iou_th: float = 0.3, max_age: int = 20):
+        self.iou_th = iou_th
+        self.max_age = max_age
+        self.tracks: Dict[int, Track] = {}
+        self.next_id = 0
+
+    def update(self, detections: List[Box]) -> Dict[int, Box]:
+        matched = {}
+        used = set()
+        for tid, track in list(self.tracks.items()):
+            track.age += 1
+            if track.age > self.max_age:
+                del self.tracks[tid]
+                continue
+            best_iou = 0
+            best_det = None
+            best_idx = -1
+            for i, det in enumerate(detections):
+                if i in used:
+                    continue
+                iou = PersonDetector._iou(track.box, det)
+                if iou > best_iou:
+                    best_iou = iou
+                    best_det = det
+                    best_idx = i
+            if best_iou > self.iou_th:
+                track.box = best_det
+                track.age = 0
+                track.hits += 1
+                matched[tid] = track.box
+                used.add(best_idx)
+            else:
+                matched[tid] = track.box  # keep last
+
+        # New tracks
+        for i, det in enumerate(detections):
+            if i not in used:
+                tid = self.next_id
+                self.tracks[tid] = Track(tid, det)
+                self.next_id += 1
+                matched[tid] = det
+
+        return matched
+
+    @staticmethod
+    def _iou(a: Box, b: Box) -> float:
+        x1 = max(a.x1, b.x1)
+        y1 = max(a.y1, b.y1)
+        x2 = min(a.x2, b.x2)
+        y2 = min(a.y2, b.y2)
+        inter = max(0, x2 - x1) * max(0, y2 - y1)
+        union = (a.w() * a.h()) + (b.w() * b.h()) - inter
+        return inter / union if union > 0 else 0
+
+
+def _get_head_region(person: Box) -> tuple[int, int, int, int]:
+    """Get head region from person box (upper 40%)."""
+    x1, y1, x2, y2 = person.xyxy()
+    head_y2 = y1 + int((y2 - y1) * 0.4)
+    return x1, y1, x2, head_y2
+
+
+def _get_torso_region(person: Box) -> tuple[int, int, int, int]:
+    """Get torso region from person box (middle section)."""
+    x1, y1, x2, y2 = person.xyxy()
+    torso_y1 = y1 + int((y2 - y1) * 0.3)
+    torso_y2 = y1 + int((y2 - y1) * 0.8)
+    return x1, torso_y1, x2, torso_y2
+
+
 class PPEDetector:
     """ONNX 런타임을 사용한 PPE 감지기.
 
@@ -55,6 +220,8 @@ class PPEDetector:
         conf_threshold: float = 0.50,
         nms_iou_threshold: float = 0.45,
         input_size: int = 640,
+        person_weights: str | None = None,
+        person_conf: float = 0.45,
     ) -> None:
         """PPEDetector 초기화.
 
@@ -63,10 +230,15 @@ class PPEDetector:
             conf_threshold: 최소 감지 신뢰도 임계값
             nms_iou_threshold: NMS IoU 임계값
             input_size: 모델 입력 이미지 크기 (정사각형 변의 픽셀 수)
+            person_weights: Person detection model path (Ultralytics .pt)
+            person_conf: Person detection confidence threshold
         """
         self._conf_threshold = conf_threshold
         self._nms_iou_threshold = nms_iou_threshold
         self._input_size = input_size
+
+        # Person detector
+        self._person_detector = PersonDetector(weights=person_weights, conf=person_conf)
 
         # CPU 전용 추론 세션 생성
         self._session = ort.InferenceSession(
@@ -183,7 +355,8 @@ class PPEDetector:
         if len(indices) == 0:
             return results
 
-        for idx in indices.flatten():
+        indices_array = cast(np.ndarray, indices)
+        for idx in indices_array.flatten():
             bx, by, bw, bh = boxes_list[idx]
             x1_i = max(0, int(bx))
             y1_i = max(0, int(by))
@@ -203,6 +376,39 @@ class PPEDetector:
 
         return results
 
+    def _associate_ppe_to_persons(self, persons: list[Box], ppe_detections: list[Detection], is_helmet: bool) -> list[Box]:
+        """Associate PPE detections to persons based on anatomical regions."""
+        keywords = _HELMET_KEYWORDS if is_helmet else _JACKET_KEYWORDS
+        region_func = _get_head_region if is_helmet else _get_torso_region
+
+        matched = []
+        for person in persons:
+            person_region = region_func(person)
+            for det in ppe_detections:
+                if _label_matches(det.label, keywords):
+                    if self._iou(det.bbox, person_region) > 0.1:  # overlap threshold
+                        matched.append(person)
+                        break
+        return matched
+
+    @staticmethod
+    def _iou(box1: tuple[int, int, int, int], box2: tuple[int, int, int, int]) -> float:
+        """Calculate IoU between two boxes."""
+        x1_1, y1_1, x2_1, y2_1 = box1
+        x1_2, y1_2, x2_2, y2_2 = box2
+
+        xi1 = max(x1_1, x1_2)
+        yi1 = max(y1_1, y1_2)
+        xi2 = min(x2_1, x2_2)
+        yi2 = min(y2_1, y2_2)
+
+        inter_area = max(0, xi2 - xi1) * max(0, yi2 - yi1)
+        box1_area = (x2_1 - x1_1) * (y2_1 - y1_1)
+        box2_area = (x2_2 - x1_2) * (y2_2 - y1_2)
+        union_area = box1_area + box2_area - inter_area
+
+        return inter_area / union_area if union_area > 0 else 0
+
     def detect(self, frame: np.ndarray) -> ComplianceResult:
         """프레임에서 PPE 착용 여부를 감지한다.
 
@@ -214,24 +420,41 @@ class PPEDetector:
         """
         orig_h, orig_w = frame.shape[:2]
 
-        # 전처리 → 추론 → 후처리
+        # Detect persons first
+        persons = self._person_detector.detect(frame)
+        if not persons:
+            # No persons detected, no PPE compliance
+            return ComplianceResult(
+                has_helmet=False,
+                has_jacket=False,
+                detections=[],
+            )
+
+        # Detect PPE
         input_tensor = self._preprocess(frame)
         outputs = self._session.run([self._output_name], {self._input_name: input_tensor})
-        detections = self._postprocess(outputs[0], orig_h, orig_w)
+        ppe_detections = self._postprocess(cast(np.ndarray, outputs[0]), orig_h, orig_w)
 
-        # 헬멧/조끼 착용 여부 판단
-        # 우선순위: 모델이 명시적으로 "NO-Hardhat" 같은 위반 클래스를 출력하면
-        # 이를 1순위 신호로 사용한다. 위반 클래스 없으면 착용 클래스 검출 여부로 판단.
-        explicit_no_helmet = any(_label_matches(d.label, _NO_HELMET_KEYWORDS) for d in detections)
-        explicit_no_jacket = any(_label_matches(d.label, _NO_JACKET_KEYWORDS) for d in detections)
+        # Associate PPE with persons
+        matched_helmets = self._associate_ppe_to_persons(persons, ppe_detections, is_helmet=True)
+        matched_jackets = self._associate_ppe_to_persons(persons, ppe_detections, is_helmet=False)
 
-        has_helmet = (not explicit_no_helmet) and any(_label_matches(d.label, _HELMET_KEYWORDS) for d in detections)
-        has_jacket = (not explicit_no_jacket) and any(_label_matches(d.label, _JACKET_KEYWORDS) for d in detections)
+        has_helmet = len(matched_helmets) > 0
+        has_jacket = len(matched_jackets) > 0
+
+        # Combine detections
+        all_detections = ppe_detections
+        for person in persons:
+            all_detections.append(Detection(
+                label='person',
+                confidence=person.confidence,
+                bbox=(person.x1, person.y1, person.x2, person.y2),
+            ))
 
         return ComplianceResult(
             has_helmet=has_helmet,
             has_jacket=has_jacket,
-            detections=detections,
+            detections=all_detections,
         )
 
     def draw_boxes(
